@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <algorithm>
 #include <fstream>
 
 #include "util.h"
@@ -26,17 +27,23 @@ Endurer::parse_and_validate_args(int argc, char* argv[])
     opterr = 0; // global: don't explicitly warn on unrecognized args
 
     // sentinels
+    mode = "";
     page_size = -1;
     cell_write_endurance = -1;
-    remap_write_period = -1;
+    remap_period = -1;
     input_time_units = 0;
     input_filepath = "";
 
 
     // parse
-    while ((c = getopt(argc, argv, "p:c:r:i:t:")) != -1) {
+    while ((c = getopt(argc, argv, "m:p:c:r:i:t:")) != -1) {
         try {
             switch (c) {
+                case 'm':
+                    mode = optarg;
+                    std::transform(mode.begin(), mode.end(), mode.begin(),
+                            ::tolower);
+                    break;
                 case 'p':
                     page_size = std::stol(optarg);
                     break;
@@ -44,7 +51,7 @@ Endurer::parse_and_validate_args(int argc, char* argv[])
                     cell_write_endurance = std::stol(optarg);
                     break;
                 case 'r':
-                    remap_write_period = std::stol(optarg);
+                    remap_period = std::stod(optarg);
                     break;
                 case 'i':
                     input_filepath = optarg;
@@ -61,18 +68,22 @@ Endurer::parse_and_validate_args(int argc, char* argv[])
         }
     }
 
+
     // and validate
+    if (mode != "time" and mode != "write")
+        print_message_and_die("mode must be either 'time' or 'write': "
+                "<-m MODE>");
     if (page_size == -1)
-        print_message_and_die("must supply page size: <-p PAGE_SIZE>\n");
+        print_message_and_die("must supply page size: <-p PAGE_SIZE>");
     if (cell_write_endurance == -1)
-        print_message_and_die("must supply cell write endurance: <-c ENDU>\n");
-    if (remap_write_period == -1)
-        print_message_and_die("must supply remap write count period: "
-                "<-r PERIOD>\n");
+        print_message_and_die("must supply cell write endurance: <-c ENDU>");
+    if (remap_period == -1)
+        print_message_and_die("must supply remap period (in time units or "
+                "write units, depending on mode): <-r PERIOD>");
     if (input_filepath == "")
-            print_message_and_die("must supply input file: <-i INPUT_FILE>\n");
-    if (input_time_units == 0) print_message_and_die("must supply input time units "
-            "(in instructions/cycles/seconds): <-t TIME_UNITS>\n");
+            print_message_and_die("must supply input file: <-i INPUT_FILE>");
+    if (input_time_units == 0) print_message_and_die("must supply input time "
+            "units (in instructions/cycles/seconds): <-t TIME_UNITS>");
 }
 
 void
@@ -80,7 +91,10 @@ Endurer::run()
 {
     read_input_file();
     create_memory();
-    do_sim();
+
+    if (mode == "write") do_sim_write();
+    else if (mode == "time") do_sim_time();
+
     print_stats();
 }
 
@@ -90,7 +104,7 @@ Endurer::read_input_file()
     size_t input_file_size;
 
     std::ifstream ifs(input_filepath, std::ios::binary);
-    if (!ifs.is_open()) print_message_and_die("could not open input file\n");
+    if (!ifs.is_open()) print_message_and_die("could not open input file");
 
     // get the file size
     ifs.seekg(0, std::ios::end);
@@ -99,7 +113,7 @@ Endurer::read_input_file()
 
     if (input_file_size % sizeof(uint64_t) != 0)
             print_message_and_die("malformed input file; its size should be a "
-            "multiple of %zu\n", sizeof(uint64_t));
+            "multiple of %zu", sizeof(uint64_t));
 
     write_set_n_pages = input_file_size / sizeof(uint64_t);
 
@@ -159,10 +173,10 @@ Endurer::do_remap()
 }
 
 /*
- * Actually loop and perform the simulation.
+ * Write-triggered simulation mode.
  */
 void
-Endurer::do_sim()
+Endurer::do_sim_write()
 {
     // outer loop: apply write set to memory at shifted offset
     while (true) {
@@ -178,7 +192,7 @@ Endurer::do_sim()
             memory[mem_idx].period_writes += new_writes;
             memory[mem_idx].total_writes += new_writes;
 
-            if (memory[mem_idx].period_writes >= remap_write_period) {
+            if (memory[mem_idx].period_writes >= remap_period) {
                 should_remap = true;
             }
 
@@ -191,6 +205,45 @@ Endurer::do_sim()
         if (should_terminate) break;
 
         ++n_iterations;
+    }
+}
+
+/*
+ * Time-triggered simulation mode.
+ */
+void
+Endurer::do_sim_time()
+{
+    double remap_timer = 0;
+
+    // outer loop: apply write set to memory at shifted offset
+    while (true) {
+
+        bool should_remap = false;
+        bool should_terminate = false;
+        // inner loop: apply page writes to individual pages
+        for (size_t i = 0; i < write_set_n_pages; ++i) {
+            uint64_t new_writes = write_set[i];
+
+            size_t mem_idx = (i + curr_offset) % memory_n_pages;
+
+            // don't need to track period writes
+            memory[mem_idx].total_writes += new_writes;
+
+            if (memory[mem_idx].total_writes >= cell_write_endurance) {
+                should_terminate = true;
+            }
+        }
+
+        if (should_terminate) break;
+
+        ++n_iterations;
+        remap_timer += input_time_units;
+
+        if (remap_timer >= remap_period) {
+            do_remap();
+            remap_timer = 0;
+        }
     }
 }
 

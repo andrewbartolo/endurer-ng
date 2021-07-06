@@ -23,7 +23,8 @@ class Endurer {
         void parse_and_validate_args(int argc, char* argv[]);
         void read_input_file();
         void create_memory();
-        void do_sim();
+        void do_sim_write();
+        void do_sim_time();
         void do_remap();
         void compute_stats();
         void print_stats();
@@ -35,9 +36,10 @@ class Endurer {
             uint64_t total_writes;
         } mem_t;
 
+        std::string mode;
         int64_t page_size;
         int64_t cell_write_endurance;
-        int64_t remap_write_period;
+        double remap_period;
         double input_time_units;
         std::string input_filepath;
 
