@@ -70,14 +70,14 @@ Endurer::parse_and_validate_args(int argc, char* argv[])
 
 
     // and validate
-    if (mode != "time" and mode != "write")
-        print_message_and_die("mode must be either 'time' or 'write': "
-                "<-m MODE>");
+    if (mode != "time" and mode != "write" and mode != "lifetime")
+        print_message_and_die("mode must be either 'time', 'write', or "
+                "'lifetime': <-m MODE>");
     if (page_size == -1)
         print_message_and_die("must supply page size: <-p PAGE_SIZE>");
     if (cell_write_endurance == -1)
         print_message_and_die("must supply cell write endurance: <-c ENDU>");
-    if (remap_period == -1)
+    if (mode != "lifetime" and remap_period == -1)
         print_message_and_die("must supply remap period (in time units or "
                 "write units, depending on mode): <-r PERIOD>");
     if (input_filepath == "")
@@ -94,6 +94,7 @@ Endurer::run()
 
     if (mode == "write") do_sim_write();
     else if (mode == "time") do_sim_time();
+    else if (mode == "lifetime") do_sim_lifetime();
 
     print_stats();
 }
@@ -219,7 +220,6 @@ Endurer::do_sim_time()
     // outer loop: apply write set to memory at shifted offset
     while (true) {
 
-        bool should_remap = false;
         bool should_terminate = false;
         // inner loop: apply page writes to individual pages
         for (size_t i = 0; i < write_set_n_pages; ++i) {
@@ -238,6 +238,7 @@ Endurer::do_sim_time()
         if (should_terminate) break;
 
         ++n_iterations;
+
         remap_timer += input_time_units;
 
         if (remap_timer >= remap_period) {
@@ -246,6 +247,30 @@ Endurer::do_sim_time()
         }
     }
 }
+
+/*
+ * Simple lifetime estimate with no remapping.
+ */
+void
+Endurer::do_sim_lifetime()
+{
+    uint64_t max_n_writes = 0;
+    uint64_t total_n_writes = 0;
+
+    for (size_t i = 0; i < write_set_n_pages; ++i) {
+        if (write_set[i] > max_n_writes) max_n_writes = write_set[i];
+        total_n_writes += write_set[i];
+    }
+    printf("most-written word in histogram had this many writes: %zu\n",
+            max_n_writes);
+    printf("total number of writes in histogram (sum): %zu\n", total_n_writes);
+
+    double multiple_of_input_time = (double) cell_write_endurance /
+            (double) max_n_writes;
+
+    time_unscaled = multiple_of_input_time * input_time_units;
+}
+
 
 /*
  * Computes derived stats.
@@ -259,7 +284,7 @@ Endurer::compute_stats()
 
     uint64_t gib = (1024 * 1024 * 1024);
     double mems_per_gib = (double) gib / (double) (memory_n_pages * page_size);
-    printf("mems. per GiB: %zf\n", mems_per_gib);
+    printf("mems. per GiB: %f\n", mems_per_gib);
 
     n_iterations_per_gib = n_iterations * mems_per_gib;
     time_per_gib = input_time_units * n_iterations_per_gib;
@@ -273,12 +298,20 @@ Endurer::print_stats()
     // compute first if we haven't yet
     if (!stats_final) compute_stats();
 
-    printf("WSS: %zu pages (%zu bytes; %zf GiB)\n", wss_pages, wss_bytes,
+    printf("WSS: %zu pages (%zu bytes; %f GiB)\n", wss_pages, wss_bytes,
             wss_gib);
-    printf("n. remaps: %zu\n", n_remaps);
-    printf("n. iterations: %zu\n", n_iterations);
-    printf("n. iterations per GiB: %zf\n", n_iterations_per_gib);
-    printf("time (in instructions, cycles, or s) per GiB: %zf\n", time_per_gib);
+
+
+    if (mode == "lifetime") {
+        printf("time (in instructions, cycles, or s): %f\n", time_unscaled);
+    }
+    else {
+        printf("n. remaps: %zu\n", n_remaps);
+        printf("n. iterations: %zu\n", n_iterations);
+        printf("n. iterations per GiB: %f\n", n_iterations_per_gib);
+        printf("time (in instructions, cycles, or s) per GiB: %f\n",
+                time_per_gib);
+    }
 }
 
 

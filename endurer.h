@@ -25,6 +25,7 @@ class Endurer {
         void create_memory();
         void do_sim_write();
         void do_sim_time();
+        void do_sim_lifetime();
         void do_remap();
         void compute_stats();
         void print_stats();
@@ -65,5 +66,6 @@ class Endurer {
         uint64_t wss_bytes = 0;
         double wss_gib = 0;
         double n_iterations_per_gib = 0;
+        double time_unscaled = 0;
         double time_per_gib = 0;
 };

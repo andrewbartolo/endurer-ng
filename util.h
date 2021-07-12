@@ -3,4 +3,4 @@
  */
 #pragma once
 
-void print_message_and_die(char* format, ...);
+void print_message_and_die(const char* format, ...);
